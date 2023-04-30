@@ -1,0 +1,54 @@
+{
+    "type": "application",
+    "source-directories": [
+        "src"
+    ],
+    "elm-version": "0.19.1",
+    "dependencies": {
+        "direct": {
+            "Evelios/elm-hash": "1.0.0",
+            "danyx23/elm-uuid": "2.1.2",
+            "elm/browser": "1.0.2",
+            "elm/core": "1.0.5",
+            "elm/html": "1.0.0",
+            "elm/json": "1.1.3",
+            "elm/random": "1.0.0",
+            "elm/svg": "1.0.1",
+            "elm/time": "1.0.0",
+            "elm-community/list-extra": "8.7.0",
+            "elm-community/result-extra": "2.4.0",
+            "elm-explorations/test": "2.0.1",
+            "ianmackenzie/elm-1d-parameter": "1.0.1",
+            "ianmackenzie/elm-geometry": "3.9.1",
+            "ianmackenzie/elm-geometry-svg": "3.0.0",
+            "ianmackenzie/elm-units": "2.9.0",
+            "jamesrweb/elm-aviary": "1.0.3",
+            "mdgriffith/elm-animator": "1.1.1",
+            "mpizenberg/elm-pointer-events": "4.0.2",
+            "ohanhi/keyboard": "2.0.1"
+        },
+        "indirect": {
+            "avh4/elm-color": "1.0.0",
+            "bonzaico/murmur3": "1.0.0",
+            "chain-partners/elm-bignum": "1.0.1",
+            "elm/bytes": "1.0.8",
+            "elm/file": "1.0.5",
+            "elm/regex": "1.0.0",
+            "elm/url": "1.0.0",
+            "elm/virtual-dom": "1.0.3",
+            "ianmackenzie/elm-float-extra": "1.1.0",
+            "ianmackenzie/elm-interval": "2.0.0",
+            "ianmackenzie/elm-triangular-mesh": "1.1.0",
+            "ianmackenzie/elm-units-interval": "2.3.0",
+            "jamesrweb/elm-combinators": "1.0.0",
+            "myrho/elm-round": "1.0.5"
+        }
+    },
+    "test-dependencies": {
+        "direct": {},
+        "indirect": {
+            "NoRedInk/elm-random-general": "1.0.0",
+            "NoRedInk/elm-random-pcg-extended": "1.0.0"
+        }
+    }
+}

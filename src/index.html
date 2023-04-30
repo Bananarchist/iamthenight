@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Main</title>
+    <link rel="stylesheet" href="index.css" />
+    <script src="main.js"></script>
+  </head>
+  <body>
+    <main id="app">
+      <noscript>
+        <p>You will need to enable JavaScript</p>
+      </noscript>
+      <button id="loadappbtn" tabindex="1">Load App</button>
+    </main>
+    <script>
+      const mountElm = () => {
+        const node = document.getElementById("app");
+        const flags = {
+          width: document.body.clientWidth,
+          height: document.body.clientHeight
+        };
+        const app = Elm.Main.init({ node, flags });
+        fetchLevels(app);
+      };
+
+      loadAppBtn = document.getElementById("loadappbtn");
+      loadAppBtn.style.display = "block";
+      loadAppBtn.addEventListener("click", function (e) {
+        mountElm();
+      });
+
+      fetchLevels = (app) => {
+          [ "levels/1.json"
+          ]
+          .map(f => {
+            fetch(f)
+              .then(response => response.json())
+              .then(json => {
+                console.log(`${f} loaded`);
+                app.ports.levelLoaded.send(json.data);
+              });
+          });
+      };
+      loadAppBtn.focus();
+    </script>
+  </body>
+</html>

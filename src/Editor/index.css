@@ -1,0 +1,140 @@
+body,
+html {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+#loadappbtn {
+  display: none;
+}
+
+main {
+  display: flex;
+  height: 100%;
+}
+
+#toolbox {
+  flex: 0 0 120px;
+  display: flex;
+  flex-direction: column;
+  border-left: solid 1px;
+  text-align: center;
+  max-width: 120px;
+}
+
+#canvas {
+  flex: 1 1 auto;
+}
+
+svg {
+  background: green;
+}
+
+
+.wall {
+  stroke: black;
+  fill: grey;
+}
+
+.light {
+  fill: orange;
+  stroke: yellow;
+  stroke-dasharray: 1 1;
+  stroke-width: 10;
+  opacity: 0.8;
+}
+
+.shadow {
+  fill: black;
+}
+
+.controls-label {
+  border-top: solid 1px;
+  border-bottom: solid 1px;
+  background: lightgray;
+  margin-bottom: 3px;
+}
+
+* + .controls-label {
+  margin-top: 10px;
+}
+
+.ray {
+  stroke: yellow;
+  stroke-dasharray: 1 1;
+}
+
+#room {
+  stroke: black;
+}
+
+#creating {
+  stroke-dasharray: 4 1;
+}
+
+.selected {
+  stroke: red;
+}
+
+.dragging {
+  opacity: 0.7;
+  stroke-dasharray: 4 1;
+}
+
+.drag-placeholder {
+  opacity: 0.3;
+}
+
+.cursor-moving {
+  cursor: move;
+}
+
+.cursor-select {
+  cursor: pointer;
+}
+
+.cursor-crosshair {
+  cursor: crosshair;
+}
+
+#zoomcontrols {
+  display: flex;
+}
+
+#zoomcontrols * {
+  flex: 1 1 auto;
+  border: none;
+  padding: 0;
+}
+
+#zoomcontrols :nth-child(2) {
+  flex: 0 0 50%;
+}
+
+.display-check-box {
+  display: flex;
+}
+.display-check-box * {
+  flex: 1 1 auto;
+}
+.display-check-box *:first-child {
+  flex: 0 0 auto;
+}
+
+#roomcontrols button {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+dialog::backdrop {
+  background: rgb(0,0,0,0.65);
+}
+
+.shadow-line {
+  stroke: black;
+}

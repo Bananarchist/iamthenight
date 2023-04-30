@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Main</title>
+    <link rel="stylesheet" href="index.css" />
+    <script src="main.js"></script>
+  </head>
+  <body>
+    <main id="app">
+      <noscript>
+        <p>You will need to enable JavaScript</p>
+      </noscript>
+      <button id=loadappbtn tabindex=1>Load App</button>
+    </main>
+    <dialog id=fialog>
+      <input type=file id=fileinput />
+      <button type=button id=filesubmission>Import</button>
+      <button type=button id=filecancel>Cancel</button>
+    </dialog>
+    <script>
+      const mountElm = () => {
+        const node = document.getElementById("app");
+        const flags = {
+          width: document.body.clientWidth,
+          height: document.body.clientHeight
+        };
+        window.app = Elm.Editor.Main.init({ node, flags });
+
+        app.ports.downloadData.subscribe(data => {
+          console.log(data);
+          const blob = new Blob([data], {type: "application/json"});
+          const tempUrl = URL.createObjectURL(blob);
+          const dlLink = document.createElement("a");
+          dlLink.href = tempUrl;
+          dlLink.download = "map.json";
+          document.body.appendChild(dlLink);
+          dlLink.click();
+          URL.revokeObjectURL(tempUrl);
+          dlLink.remove();
+        });
+
+        app.ports.toggleDialog.subscribe(toggleDialog);
+        app.ports.createOcclusionCanvas.subscribe(data => {
+          setTimeout(() => {
+            const canvas = document.querySelector("canvas");
+            const ctx = canvas.getContext("2d");
+            const myImageData = ctx.createImageData(canvas.clientWidth, canvas.clientHeight);
+            const lit = [255, 255, 255, 255];
+            const shadowed = [0, 0, 0, 255];
+            for (let i = 0; i < data.length; i++) {
+              myImageData.data[i * 4 + 0] = data[i] ? 0 : 255;
+              myImageData.data[i * 4 + 1] = data[i] ? 0 : 255;
+              myImageData.data[i * 4 + 2] = data[i] ? 0 : 255;
+              myImageData.data[i * 4 + 3] = 255;
+            }
+            ctx.putImageData(myImageData, 0, 0);
+            console.log("TIMEOUT TRIGGERED");
+          }, 500);
+        });
+
+
+
+        function toggleDialog(id) {
+          console.log(id)
+          const dialog = document.querySelector(`#${id}`);
+          if (dialog.open) {
+            dialog.close();
+          } else {
+            dialog.showModal();
+          }
+        }
+
+        const filesubmissionbutton = document.getElementById("filesubmission");
+        const filecancelbutton = document.getElementById("filecancel");
+        const fileinput = document.getElementById("fileinput");
+        filecancelbutton.onclick = function() {
+          toggleDialog("fialog");
+        }
+        filesubmissionbutton.onclick = function() {
+          const files = fileinput.files;
+          const reader = new FileReader();
+          reader.onload = function() {
+            toggleDialog("fialog");
+            app.ports.fileDataReceiver.send(reader.result);
+          };
+          if(files[0]) {
+            reader.readAsText(files[0]);
+          }
+        };
+
+      };
+
+      loadAppBtn = document.getElementById("loadappbtn");
+      loadAppBtn.style.display = "block";
+      loadAppBtn.addEventListener("click", function (e) {
+        mountElm();
+      });
+      loadAppBtn.focus();
+      mountElm();
+
+    </script>
+  </body>
+</html>
