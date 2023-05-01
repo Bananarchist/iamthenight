@@ -2,6 +2,7 @@ module Map.Room exposing (..)
 import Length
 
 import Dict exposing (Dict)
+import Dict.Extra
 import Map.Object exposing (Object)
 import Map.Light exposing (Light)
 import Map.World as World
@@ -34,63 +35,50 @@ import Polyline2d
 import Array exposing (Array)
 import Area
 import Hash exposing (Hash)
+import Map.Entity as Entity exposing (Entity)
+import Aviary.Birds exposing (kestrel)
+import Map.Entity exposing (Entity(..))
 
 type alias LightId = String
 type alias ObjectId = String
 type alias ShadowId = String
 type alias RoomId = String
+type alias EntityId = String
 
 type Room 
-    = Room RoomData PendingRoomData
-
-type Path
-    = StartingAt ShadowId
-    | ToRoom
-    | TerminatingAt ShadowId
-    | Between ShadowId ShadowId
+    = Room RoomData 
 
 type alias RoomData =
-    { objects : Dict ObjectId Object
-    , lights : Dict LightId Light
-    , shadows : Dict ShadowId Shadow
-    -- move to map editor
-    , rays : Dict LightId (List World.Line)
-    , box : World.BoundingBox
-    , shadow_to_shadow : Dict ShadowId (List ShadowId, List ShadowId)
-    , initial : (ShadowId, Shadow)
-    , terminal : (ShadowId, Shadow)
-    }
--- Move to map editor    
-type alias PendingRoomData =
-    { objects : List Object
-    , lights : List Light
-    , shadows : List Shadow
+    { box : World.BoundingBox
+    , entities : Dict EntityId Entity
+    , exits : Dict EntityId RoomId
+    , entry : EntityId
     }
 
 defaultPendingRoomData =
     { objects = [], shadows = [], lights = []}
 
-roomPendingData : Room -> Bool
-roomPendingData (Room _ p) = 
-    --[.objects, .shadows, .lights]
-    --|> List.map (becard not List.isEmpty)
-    [ .objects >> List.isEmpty >> not
-    , .shadows >> List.isEmpty >> not
-    , .lights >> List.isEmpty >> not
-    ]
-    |> cardinal anyPredicates p
     
-
 newRoom : World.BoundingBox -> Room
 newRoom bb =
     Room
-        { objects = Dict.empty
-        , lights = Dict.empty
-        , shadows = Dict.empty
-        , rays = Dict.empty
-        , box = bb
+        { box = bb
+        , entities = Dict.empty
+        , exits = Dict.empty
+        , entry = ""
         }
-        defaultPendingRoomData
+
+setEntry : EntityId -> Room -> Room
+setEntry id (Room d) =
+    Room { d | entry = id }
+
+entryId : Room -> EntityId
+entryId = roomData >> .entry
+
+entry : Room -> Maybe Entity
+entry (Room d) =
+    Dict.get d.entry d.entities
+
 
 defaultRoom : Room
 defaultRoom =
@@ -98,64 +86,64 @@ defaultRoom =
     |> newRoom
 
 copyToNewRoom : List String -> Room -> Room
-copyToNewRoom keys (Room d pd) =
+copyToNewRoom keys (Room d) =
     Room 
         { d
-        | objects = Dict.filter (\k _ -> List.member k keys) d.objects
-        , lights = Dict.filter (\k _ -> List.member k keys) d.lights
+        | entities = Dict.filter (\k _ -> List.member k keys) d.entities
         }
-        pd
-    |> createShadows
 
 clearRoom : Room -> Room
-clearRoom (Room d pd) =
+clearRoom (Room d) =
     Room
     { d
-    | objects = Dict.empty
-    , lights = Dict.empty
-    , shadows = Dict.empty
-    }
-    { pd
-    | objects = []
-    , lights = []
-    , shadows = []
+    | entities = Dict.empty
     }
 
 {-| Preserves room occupants not in second room -}
 diff : Room -> Room -> Room
-diff (Room d pd) (Room ds _) =
+diff (Room d ) (Room ds ) =
     Room
     { d
-    | objects = Dict.diff d.objects ds.objects
-    , lights = Dict.diff d.lights ds.lights
-    , rays = Dict.diff d.rays ds.rays
+    | entities = Dict.diff d.entities ds.entities
     }
-    pd
 
 
 union : Room -> Room -> Room
-union (Room d pd) (Room ds pds) =
+union (Room d ) (Room ds ) =
     Room
     { d
-    | objects = Dict.union ds.objects d.objects
-    , lights = Dict.union ds.lights d.lights
-    , rays = Dict.union ds.rays d.rays
+    | entities = Dict.union ds.entities d.entities
     }
-    pd
 
+selectEntities : List EntityId -> Room -> List Entity
+selectEntities keys (Room d) =
+    Dict.filter (ignoreValue (cardinal List.member keys)) d.entities
+    |> Dict.values
+
+
+mapEntities : (Entity -> Entity) -> Room -> Room
+mapEntities fn (Room d) =
+    Room
+        { d | entities = Dict.map (ignoreKey fn) d.entities }
 
 roomData : Room -> RoomData
-roomData (Room d _) = d
+roomData (Room d ) = d
 
-pendingRoomData : Room -> PendingRoomData
-pendingRoomData (Room _ d) = d
+ignoreKey : (e -> f) -> (k -> e -> f)
+ignoreKey fn = (\_ e -> fn e)
+
+ignoreValue : (k -> f) -> (k -> e -> f)
+ignoreValue fn = (\e _ -> fn e)
 
 objects : Room -> Dict String Object
-objects = roomData >> .objects
+objects = roomData >> .entities >> Dict.Extra.filterMap (ignoreKey Entity.object)
 
 setObjects : Dict String Object -> Room -> Room
-setObjects o (Room d pd) =
-    Room {d | objects = o} pd
+setObjects o (Room d ) =
+    Room {d 
+        | entities = Dict.filter (ignoreKey (Entity.objectか >> not)) d.entities 
+        |> Dict.union (Dict.map (ignoreKey EObject) o) 
+    }
 
 mapObjects : (Dict String Object -> Dict String Object) -> Room -> Room
 mapObjects fn r =
@@ -164,14 +152,14 @@ mapObjects fn r =
     |> cardinal setObjects r
 
 lights : Room -> Dict String Light
-lights = roomData >> .lights
-
-rays : Room -> Dict String (List World.Line)
-rays = roomData >> .rays
+lights = roomData >> .entities >> Dict.Extra.filterMap (ignoreKey Entity.light)
 
 setLights : Dict String Light -> Room -> Room
-setLights o (Room d pd) =
-    Room {d | lights = o} pd
+setLights o (Room d ) =
+    Room {d 
+        | entities = Dict.filter (ignoreKey (Entity.lightか >> not)) d.entities 
+        |> Dict.union (Dict.map (ignoreKey ELight) o) 
+    }
 
 mapLights : (Dict String Light -> Dict String Light) -> Room -> Room
 mapLights fn r =
@@ -184,41 +172,35 @@ anyLightsか = lights >> Dict.size >> (/=) 0
 
 
 shadows : Room -> Dict String Shadow
-shadows = roomData >> .shadows
+shadows = roomData >> .entities >> Dict.Extra.filterMap (ignoreKey Entity.shadow)
 
 
 setShadows : Dict String Shadow -> Room -> Room
-setShadows o (Room d pd) =
-    Room {d | shadows = o} pd
+setShadows o (Room d ) =
+    Room {d 
+        | entities = Dict.filter (ignoreKey (Entity.shadowか >> not)) d.entities 
+        |> Dict.union (Dict.map (ignoreKey EShadow) o) 
+    }
 
 boundingBox : Room -> World.BoundingBox
 boundingBox = roomData >> .box
 
 setBoundingBox : World.BoundingBox -> Room -> Room
-setBoundingBox o (Room d pd) =
-    Room {d | box = o} pd
-
-pendingObjects : Room -> List Object
-pendingObjects = pendingRoomData >> .objects
-
-pendingLights : Room -> List Light
-pendingLights = pendingRoomData >> .lights
-
-pendingShadows : Room -> List Shadow
-pendingShadows = pendingRoomData >> .shadows
+setBoundingBox o (Room d ) =
+    Room {d | box = o} 
 
 occupants : Room -> Int
-occupants r =
-    (objects r |> Dict.size)
-    + (lights r |> Dict.size)
-    + (shadows r |> Dict.size)
+occupants (Room d) =
+    d.entities |> Dict.size
 
-pendingOccupants : Room -> Int
-pendingOccupants r =
-    (pendingObjects r |> List.length)
-    + (pendingLights r |> List.length)
-    + (pendingShadows r |> List.length)
+entities : Room -> Dict String Entity
+entities (Room d) = d.entities
 
+setEntities : Dict String Entity -> Room -> Room
+setEntities es (Room d) =
+    Room { d | entities = es }
+
+{-
 addKey : String -> Room -> Room
 addKey key room = 
     if wantingKeys room == 0 then
@@ -229,19 +211,13 @@ addKey key room =
         keyLight key room
     else 
         keyShadow key room
+-}
 
-dropObject : String -> Room -> Room
-dropObject key (Room d pd) =
-    Room { d | objects = Dict.remove key d.objects } pd
+dropEntity : String -> Room -> Room
+dropEntity key (Room d ) =
+    Room { d | entities = Dict.remove key d.entities }
 
-dropLight : String -> Room -> Room
-dropLight key (Room d pd) =
-    Room { d | lights = Dict.remove key d.lights, rays = Dict.remove key d.rays } pd
-
-createObject : Object -> Room -> Room
-createObject obj (Room d pd) =
-    Room d { pd | objects = obj :: pd.objects }
-
+{-
 keyObject : String -> Room -> Room
 keyObject key (Room d pd) =
     case pd.objects of
@@ -254,12 +230,9 @@ keyObject key (Room d pd) =
                 | objects = os
                 }
         _ -> Room d pd
+-}
 
-
-createLight : Light -> Room -> Room
-createLight light (Room d pd) =
-    Room d { pd | lights = light :: pd.lights }
-
+{-
 rayForLight : Light -> Room -> List (World.Line)
 rayForLight l (Room d _) =
     let 
@@ -294,57 +267,14 @@ updateRays ((Room d pd) as room) =
         (\_ l -> rayForLight l room)
     }
     pd
+-}
     
 
-keyLight : String -> Room -> Room
-keyLight key ((Room d pd) as room) =
-    case pd.lights of
-        ( l :: ls) -> 
-            Room 
-                { d 
-                | lights = Dict.insert key l d.lights 
-                , rays = Dict.insert key (rayForLight l room) d.rays
-                }
-                { pd 
-                | lights = ls
-                }
-        _ -> Room d pd
+addEntity : EntityId -> Entity -> Room -> Room
+addEntity eid e (Room d ) =
+    Room { d | entities = Dict.insert eid e d.entities }
 
-
-createShadow : Shadow -> Room -> Room
-createShadow shadow (Room d pd) =
-    Room d { pd | shadows = shadow :: pd.shadows }
-
-keyShadow : String -> Room -> Room
-keyShadow key (Room d pd) =
-    case pd.shadows of
-        ( sh :: shs) -> 
-            Room 
-                { d 
-                | shadows = Dict.insert key sh d.shadows 
-                }
-                { pd 
-                | shadows = shs
-                }
-        _ -> Room d pd
-
-
-wantingKeys : Room -> Int
-wantingKeys (Room _ pd) = 
-    [ .objects >> List.length
-    , .shadows >> List.length
-    , .lights >> List.length
-    ]
-    |> List.map ((|>) pd)
-    |> List.sum
-
-
-keyUsed : String -> Room -> Bool
-keyUsed k room =
-    (Dict.member k (objects room))
-    || (Dict.member k (lights room))
-    || (Dict.member k (shadows room))
-
+{-
 createShadows : Room -> Room
 createShadows ((Room d pd) as room) =
     let
@@ -590,6 +520,7 @@ occlusionMap (Room d pd) =
             |> Debug.log "idx") 
             Lit a) 
         arr d.lights
+-}
 
 pointId : World.Point -> Hash
 pointId =

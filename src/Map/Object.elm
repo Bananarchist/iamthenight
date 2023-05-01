@@ -28,8 +28,8 @@ newWall : World.Point -> World.Point -> Object
 newWall p1 p2 =
     { kind = Wall p1 p2 }
 
-translateObjectByVector : World.Vector -> Object -> Object
-translateObjectByVector vec obj =
+translateBy : World.Vector -> Object -> Object
+translateBy vec obj =
     case obj.kind of
         Wall pt1 pt2 -> 
             { kind = Wall 

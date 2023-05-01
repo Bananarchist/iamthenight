@@ -50,9 +50,11 @@ view model =
         MainMenu {levels} ->
             levels
             |> List.map (\l -> 
-                Html.li 
-                    [ Html.Events.onClick (Msg.SelectLevel l) ]
-                    [ Html.text l.name ]
+                Html.li []
+                    [ Html.button
+                        [ Html.Events.onClick (Msg.SelectLevel l) ]
+                        [ Html.text l.name ]
+                    ]
                 )
             |> Html.ul []
             |> List.singleton
@@ -71,17 +73,23 @@ update msg model =
                     , Cmd.none
                     )
                 Msg.LevelLoadingError err ->
+                    let
+                        m = Debug.log "Error" err
+                    in
                     ( model, Cmd.none )
                 _ -> ( model, Cmd.none )
 
         MainMenu {levels, width, height} ->
             case msg of 
                 Msg.SelectLevel level -> 
-                    let
-                        logic = Logic.init |> Logic.setMap level
-                        graphics = Graphics.init width height logic
-                    in
-                    Game { logic = logic, gfx = graphics, controls = [], levels = levels }
+                    Logic.init level
+                    |> Maybe.map(\l ->
+                        let
+                            graphics = Graphics.init width height l
+                        in
+                        Game { logic = l, gfx = graphics, controls = [], levels = levels }
+                        )
+                    |> Maybe.withDefault model
                     |> cardinal Tuple.pair Cmd.none
 
                 _ -> (model, Cmd.none)
@@ -129,8 +137,10 @@ subscriptions model =
                 , Graphics.subscriptions gfx
                -- , Msg.animationFrameSubscription
                 , Sub.map Msg.KeyMsg Keyboard.subscriptions
+                , Msg.levelListener
                 ]
-        _ -> Sub.none
+        _ ->
+            Sub.batch [ Msg.levelListener ]
             
 init : Int -> Int -> Model
 init w h = 

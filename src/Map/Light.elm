@@ -17,8 +17,8 @@ point {position} = position
 newPoint : World.Point -> Light
 newPoint p = { kind = Point, position = p }
 
-translateLightByVector : World.Vector -> Light -> Light
-translateLightByVector vec l =
+translateBy : World.Vector -> Light -> Light
+translateBy vec l =
     { l
     | position = Point2d.translateBy vec l.position
     }

@@ -36,10 +36,14 @@
           ]
           .map(f => {
             fetch(f)
-              .then(response => response.json())
+              .then(response =>  {
+                console.log(response);
+                return response.json();
+              })
               .then(json => {
                 console.log(`${f} loaded`);
-                app.ports.levelLoaded.send(json.data);
+                console.log(json);
+                app.ports.levelLoaded.send(JSON.stringify(json));
               });
           });
       };

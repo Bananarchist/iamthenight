@@ -1,4 +1,6 @@
 port module Editor.Main exposing (main)
+import Length
+import BoundingBox2d
 import Array
 import Aviary.Birds exposing (robinStar)
 import Svg
@@ -8,6 +10,7 @@ import Map.Light exposing (Light)
 import Map.Room exposing (defaultRoom)
 import Map.Room exposing (newRoom)
 import Map.Object exposing (Object)
+import Html.Events as Emits
 
 import Aviary.Birds exposing (applicator, blackbird, cardinal, kestrel)
 import BoundingBox2d
@@ -43,11 +46,15 @@ import Map.Shadow
 import Aviary.Birds exposing (finchStar)
 import Keyboard
 import Keyboard exposing (Key)
+import Map.Entity as Entity exposing (Entity)
+import Hash
+import Map.Level exposing (Level)
 
 
 type alias ObjectId = String
 type alias RoomId = String
 type alias PortalId = String
+type alias EntityId = String
 type alias Layers = List ( LayerId, Bool )
 
 
@@ -58,15 +65,43 @@ type LayerId
     | RoomLayer
     | RaysLayer
 
+type alias PendingRoom =
+    { room : Maybe Room
+    , entities : Dict EntityId Object
+    , rays : Dict EntityId (List World.Line)
+    , paths : Dict EntityId (List World.Line)
+    }
+
+type alias DebugGFX =
+    { rays : Dict EntityId (List World.Line)
+    , paths : Dict EntityId (List World.Line)
+    }
+
+
+{-
+roomPendingData : PendingRoom -> Bool
+roomPendingData p =
+    --[.objects, .shadows, .lights]
+    --|> List.map (becard not List.isEmpty)
+    [ .objects >> List.isEmpty >> not
+    , .shadows >> List.isEmpty >> not
+    , .lights >> List.isEmpty >> not
+    ]
+    |> cardinal anyPredicates p
+-}
 
 type alias Model =
     { mouseState : Tool
     , keys : List Key
-    , activeRoom : Maybe RoomId
+    , nextRoomId : Int
+    , activeRoom : RoomId
+    , entryRoom : RoomId
+    , debugGfx : DebugGFX
     , scale : Float
     , canvasWidth : C.ScreenLength
     , canvasHeight : C.ScreenLength
     , frame : C.Frame
+    , name : String
     , roomNames : Dict RoomId String
     , rooms : Dict RoomId Room
     , layers : Layers
@@ -87,6 +122,7 @@ labelForLayer layer =
 
         RoomLayer ->
             "Boundary"
+
         RaysLayer ->
             "Rays"
 
@@ -152,11 +188,6 @@ disableRaysLayer = disableLayer RaysLayer
 rayslayerEnabledか = layerEnabledか RaysLayer
 
 
-type alias ObjectData =
-    { object : Object
-    }
-
-
 type Object
     = Light (Maybe C.ScreenPoint)
     | Wall (Maybe ( C.ScreenPoint, C.ScreenPoint ))
@@ -204,14 +235,19 @@ type Msg
     | Zoom Float
     | ToggleLayer LayerId
     | TriggerFialog
-    | ImportData (Result String (Dict String Room))
+    | TriggerMetadataDialog
+    | ImportData (Result String Level)
     | ExportData
     | SelectRoom RoomId
     | CreateRoom
+    | EditRoom RoomId
+    | SetRoomEntry (Maybe String)
     | RenameRoom RoomId String
-    | ResizeRoom 
+    | ResizeRoom RoomId Float Float
+    | SetLevelName String
+    | SetLevelEntry String
     | GeneratedRoomId (List Room) (List Uuid)
-    | GeneratedObjectIds RoomId (List Uuid)
+    | GeneratedObjectIds RoomId (List Entity) (List Uuid) 
     | KeyboardMsg Keyboard.Msg
 
 
@@ -223,7 +259,8 @@ type Tool
     | MoveTool Selection (Maybe ( C.ScreenPoint, C.ScreenPoint ))
 
 
-type alias Selection = Room
+
+type alias Selection = List EntityId
 {- { objects : List String
     , lights : List String
     , shadows : List String
@@ -237,8 +274,7 @@ type alias Selection = Room
 
 
 emptySelection : Selection
-emptySelection =
-    Room.defaultRoom
+emptySelection = []
 
 
 {-
@@ -261,38 +297,49 @@ init { width, height } =
             height // 2 |> toFloat
         midX =
             (width - 120) // 2 |> toFloat
-        rooms = 
-            [ defaultRoom 
-            |> Room.createObject 
-                (Map.Object.newWall 
-                    (Point2d.centimeters (midX * 0.5) (midY * 0.8)) 
-                    (Point2d.centimeters (midX * 0.6) (midY * 1.2)) 
+        frame : C.Frame
+        frame = Frame2d.atOrigin |> Frame2d.reverseY
+        translation : { scale : Float, frame : C.Frame }
+        translation = { scale = 1.0, frame = frame }
+        objectsAwaitingIds =
+            [ Map.Object.newWall 
+                ( Point2d.centimeters (midX * 0.6) (midY * 1.2) 
+                    --|> screenPointToWorldPoint translation
                 )
-            |> Room.createLight 
-                (Map.Light.newPoint
-                   (Point2d.centimeters (midX * 0.2) midY)
+                ( Point2d.centimeters (midX * 0.5) (midY * 0.8) 
+                    --|> screenPointToWorldPoint translation
                 )
+                |> Entity.EObject
+            , (Point2d.centimeters (midX * 0.2) midY)
+                --|> screenPointToWorldPoint { scale = 1, frame = frame}
+                |> Map.Light.newPoint 
+                |> Entity.ELight
             ]
 
-        beshadowedRooms = rooms --List.map Room.createShadows rooms
+        --beshadowedRooms = rooms --List.map Room.createShadows rooms
+        newRoomId = Hash.fromInt 0 |> Hash.toString
 
         mod =
             { mouseState = SelectionTool emptySelection
             , keys = []
-            , activeRoom = Nothing 
+            , nextRoomId = 1
+            , activeRoom = newRoomId 
+            , entryRoom = newRoomId
+            , debugGfx = { rays = Dict.empty, paths = Dict.empty }
             , scale = 1
             , canvasWidth = width |> toFloat |> cardinal (-) 100 |> Pixels.float
             , canvasHeight = height |> toFloat |> Pixels.float
-            , frame = Frame2d.atOrigin |> Frame2d.reverseY
-            , roomNames = Dict.empty
-            , rooms = Dict.empty
+            , name = ""
+            , frame = frame
+            , roomNames = Dict.fromList [(newRoomId, "Unnamed " ++ newRoomId)]
+            , rooms = Dict.fromList [(newRoomId, Room.defaultRoom)]
             , layers = [] |> enableObjectLayer |> enableShadowLayer |> enableRoomLayer |> disableEdgesLayer |> enableRaysLayer
             }
     in
     mod
         |> cardinal Tuple.pair
-            (Random.generate (GeneratedRoomId beshadowedRooms)
-                (Random.list (List.length beshadowedRooms) Uuid.uuidGenerator)
+            (Random.generate (GeneratedObjectIds newRoomId objectsAwaitingIds)
+                (Random.list (List.length objectsAwaitingIds) Uuid.uuidGenerator)
             )
 
 
@@ -345,24 +392,73 @@ update msg model =
     case msg of
         TriggerFialog ->
             (model, toggleDialog "fialog")
+        TriggerMetadataDialog ->
+            (model, toggleDialog "level-metadata")
         ImportData (Err e) -> 
             model
             |> wnn
         ImportData (Ok data) ->
-            if Dict.size data > 0 then
+            if Dict.size data.rooms > 0 then
                 { model
-                | rooms = data
-                , activeRoom = Dict.keys data |> List.head
+                | rooms = data.rooms
+                , activeRoom = Dict.keys data.rooms |> List.head |> Maybe.withDefault "thisisapoorlyhandlederrorcase"
                 }
                 |> wnn
             else 
                 model |> wnn
         ExportData ->
-            MapEncoder.encode model.rooms
+            MapEncoder.encode { name = "unnamed", rooms = model.rooms, entry = model.entryRoom }
             |> downloadData
             |> Tuple.pair model
         SelectRoom roomId ->
-            { model | activeRoom = Just roomId }
+            { model | activeRoom = roomId }
+            |> wnn
+        SetRoomEntry Nothing ->
+            wnn model
+        SetRoomEntry (Just id) ->
+            { model | rooms = Dict.update model.activeRoom (Maybe.map (Room.setEntry id)) model.rooms } 
+            |> wnn
+        SetLevelEntry id ->
+            { model | entryRoom = id }
+            |> wnn
+
+        SetLevelName name ->
+            { model | name = name }
+            |> wnn
+        CreateRoom ->
+            let newRoomId = (Hash.fromInt model.nextRoomId |> Hash.toString)
+            in
+            { model 
+                | rooms = Dict.insert newRoomId Room.defaultRoom model.rooms
+                , nextRoomId = model.nextRoomId + 1
+                , roomNames = Dict.insert newRoomId ("Unnamed " ++ newRoomId) model.roomNames
+                , activeRoom = newRoomId
+                }
+            |> cardinal Tuple.pair (toggleDialog "room-editor")
+
+        EditRoom roomid ->
+            { model | activeRoom = roomid }
+            |> cardinal Tuple.pair (toggleDialog "room-editor")
+
+
+        RenameRoom rid rname ->
+            { model | roomNames = Dict.insert rid rname model.roomNames }
+            |> wnn
+        ResizeRoom rid w h ->
+            { model | rooms = 
+                Dict.update rid (
+                    Maybe.andThen (\r ->
+                        BoundingBox2d.withDimensions 
+                            ( Length.centimeters w
+                            , Length.centimeters h
+                            )
+                            (Room.boundingBox r |> BoundingBox2d.centerPoint) 
+                        |> cardinal Room.setBoundingBox r 
+                        |> Just
+                    )
+                )
+                model.rooms
+            }
             |> wnn
         ToggleLayer layer ->
             { model
@@ -383,30 +479,28 @@ update msg model =
                 deleteSelection m =
                     m.activeRoom
                     |> duple
-                    |> Tuple.mapSecond (Maybe.andThen (cardinal Dict.get m.rooms))
+                    |> Tuple.mapBoth Just (cardinal Dict.get m.rooms)
                     |> maybeTuple
                     |> Maybe.map (\(id, room) ->
                         let
-                            newRoom = Room.diff room (getSelection m) -- |> Room.createShadows
+                            newRoom = List.foldl Room.dropEntity room (getSelection m) -- |> Room.createShadows
 
+                            {-
                             rndm =
                                 Room.wantingKeys room
                                 |> cardinal Random.list Uuid.uuidGenerator
+                            -}
 
                             cmd =
-                                Random.generate (GeneratedObjectIds id) rndm
+                                Cmd.none --Random.generate (GeneratedObjectIds id) rndm
                         in
                         { m 
                         | rooms = Dict.update id (kestrel (Just newRoom)) m.rooms
                         , mouseState = case m.mouseState of
                             SelectionTool _ -> 
-                                Room.defaultRoom 
-                                |> Room.setBoundingBox (Room.boundingBox room) 
-                                |> SelectionTool
+                                SelectionTool []
                             MoveTool selection pts ->
-                                Room.defaultRoom 
-                                |> Room.setBoundingBox (Room.boundingBox room) 
-                                |> cardinal MoveTool pts
+                                MoveTool [] pts
                             _ -> m.mouseState
                         }
                         |> cardinal Tuple.pair cmd
@@ -423,75 +517,35 @@ update msg model =
                     |> deleteSelection
                 Just (Keyboard.KeyDown Keyboard.Enter) -> 
                     case model.mouseState of
-                        CreationTool (Shadow ps _) ->
+                        CreationTool (Shadow ps pt) ->
                             let
                                 shadow = 
                                     ps
                                         |> Polygon2d.convexHull
                                         |> screenPolyToWorldPoly model
                                         |> Map.Shadow.new
-                                mbRoom =
-                                    model.activeRoom
-                                    |> Maybe.andThen (cardinal Dict.get model.rooms)
-                                    |> Maybe.map (Room.createShadow shadow)
-                                    --|> Maybe.map Room.createShadows
-
-                                mbRndm =
-                                    mbRoom
-                                    |> Maybe.map Room.wantingKeys
-                                    |> Maybe.map (cardinal Random.list Uuid.uuidGenerator)
-
-                                mbCmd =
-                                    model.activeRoom
-                                    |> Maybe.map GeneratedObjectIds
-                                    |> Maybe.map2 
-                                        (cardinal Random.generate)
-                                        mbRndm
+                                        |> Entity.EShadow
+                                cmd =
+                                    Random.generate
+                                        (GeneratedObjectIds model.activeRoom [shadow])
+                                        (Random.list 1 Uuid.uuidGenerator)
                             in
                             { model 
                             | mouseState = SelectionTool emptySelection 
-                            , rooms = Maybe.map (finchStar Dict.update model.rooms (Maybe.andThen (kestrel mbRoom))) model.activeRoom |> Maybe.withDefault model.rooms
                             }
-                            |> updateKeys
-                            |> cardinal Tuple.pair (Maybe.withDefault Cmd.none mbCmd)
+                            |> cardinal Tuple.pair cmd
 
                         _ -> model |> updateKeys |> wnn
                                     
                 _ ->
                     updateKeys model
                     |> wnn
-        GeneratedRoomId rooms ids ->
-            let
-                roomIds = List.map Uuid.toString ids
-                newRooms = 
-                    List.map2 Tuple.pair roomIds rooms 
-                    |> List.foldl (uncurry Dict.insert) model.rooms
-                roomsWantingKeys = 
-                    (Dict.map (kestrel Room.wantingKeys) newRooms
-                        |> Dict.filter (kestrel ((<) 0)))
-            in
-            { model 
-            | rooms = newRooms
-            , activeRoom = 
-                if Dict.size model.rooms == 0 then 
-                    List.head roomIds 
-                else model.activeRoom
-            }
-            |> cardinal Tuple.pair
-                (Cmd.batch 
-                    (Dict.foldl 
-                        (\k v acc -> 
-                            Random.generate (GeneratedObjectIds k)
-                                (Random.list v Uuid.uuidGenerator)
-                            :: acc)
-                        [] roomsWantingKeys)
-                )
-        GeneratedObjectIds roomid ids ->
+        GeneratedObjectIds roomid objs ids ->
             let
                 mbRoom = Dict.get roomid model.rooms
-                objIds = List.map Uuid.toString ids
+                objIds = List.map2 (\k v -> (Uuid.toString k, v)) ids objs
                 mbNewRoom =
-                    Maybe.map (cardinal (List.foldl Room.addKey) objIds) mbRoom
+                    Maybe.map (\r -> (List.foldl (uncurry Room.addEntity) r objIds)) mbRoom 
                     {- occlusion = 
                     cardinal Maybe.map mbNewRoom
                         (\room -> Room.occlusionMap room |> Array.map (\ps ->
@@ -568,13 +622,6 @@ update msg model =
                 SelectionTool selection ->
                     { model
                         | mouseState = SelectionTool newSelection
-                        , rooms = model.activeRoom
-                            |> Maybe.map (\id ->
-                                Dict.update id 
-                                    (Maybe.map (Room.union selection >> cardinal Room.diff newSelection))
-                                    model.rooms
-                                )
-                            |> Maybe.withDefault model.rooms
                     }
                         |> wnn
 
@@ -618,31 +665,18 @@ update msg model =
                         Just ( sp, ep ) ->
                             let
                                 vec = Vector2d.from sp ep |> screenVectorToWorldVector model
-                                objs = Room.objects selection
-                                lights = Room.lights selection
                                 mbRoom =
                                     model.activeRoom
-                                    |> Maybe.andThen (cardinal Dict.get model.rooms)
-                                    |> Maybe.map (cardinal Room.diff selection)
+                                    |> cardinal Dict.get model.rooms
+                                    --|> Maybe.map (cardinal Room.diff selection)
                                     --|> Maybe.map Room.createShadows
 
-                                mbRndm =
-                                    mbRoom
-                                    |> Maybe.map Room.wantingKeys
-                                    |> Maybe.map (cardinal Random.list Uuid.uuidGenerator)
-
-                                mbCmd =
-                                    model.activeRoom
-                                    |> Maybe.map GeneratedObjectIds
-                                    |> Maybe.map2 
-                                        (cardinal Random.generate)
-                                        mbRndm
                             in
                             { model 
                             | mouseState = MoveTool selection Nothing 
-                            , rooms = Maybe.map (finchStar Dict.update model.rooms (Maybe.andThen (kestrel mbRoom))) model.activeRoom |> Maybe.withDefault model.rooms
+                            , rooms = Dict.update model.activeRoom (Maybe.map (Room.mapEntities (Entity.translateBy vec))) model.rooms
                             }
-                            |> cardinal Tuple.pair (Maybe.withDefault Cmd.none mbCmd)
+                            |> cardinal Tuple.pair Cmd.none
 
                         Nothing ->
                             { model
@@ -660,29 +694,16 @@ update msg model =
                 CreationTool (Light _) ->
                     -- new lights and walls create new shadows...
                     let
-                        mbRoom =
-                            model.activeRoom
-                            |> Maybe.andThen (cardinal Dict.get model.rooms)
-                            |> Maybe.map (Room.createLight (Map.Light.newPoint worldPt))
-                            --|> Maybe.map Room.createShadows
 
-                        mbRndm =
-                            mbRoom
-                            |> Maybe.map Room.wantingKeys
-                            |> Maybe.map (cardinal Random.list Uuid.uuidGenerator)
-
-                        mbCmd =
-                            model.activeRoom
-                            |> Maybe.map GeneratedObjectIds
-                            |> Maybe.map2 
-                                (cardinal Random.generate)
-                                mbRndm
+                        cmd =
+                            Random.generate 
+                                (GeneratedObjectIds model.activeRoom [(Map.Light.newPoint worldPt |> Entity.ELight)]) 
+                                (Random.list 1 Uuid.uuidGenerator)
                     in
                     { model 
                     | mouseState = SelectionTool emptySelection 
-                    , rooms = Maybe.map (finchStar Dict.update model.rooms (Maybe.andThen (kestrel mbRoom))) model.activeRoom |> Maybe.withDefault model.rooms
                     }
-                    |> cardinal Tuple.pair (Maybe.withDefault Cmd.none mbCmd)
+                    |> cardinal Tuple.pair cmd
 
                 CreationTool (Wall (Just points)) ->
                     let
@@ -690,29 +711,15 @@ update msg model =
                             points
                                 |> mapTuple (Point2d.placeIn model.frame)
                                 |> mapTuple (Point2d.at (Quantity.rate Length.centimeter Pixels.pixel))
-                        mbRoom =
-                            model.activeRoom
-                            |> Maybe.andThen (cardinal Dict.get model.rooms)
-                            |> Maybe.map (Room.createObject (Map.Object.newWall worldStartPt worldEndPt)) -- need to convert Just points to worldPts
-                            --|> Maybe.map Room.createShadows
-
-                        mbRndm =
-                            mbRoom
-                            |> Maybe.map Room.wantingKeys
-                            |> Maybe.map (cardinal Random.list Uuid.uuidGenerator)
-
-                        mbCmd =
-                            model.activeRoom
-                            |> Maybe.map GeneratedObjectIds
-                            |> Maybe.map2 
-                                (cardinal Random.generate)
-                                mbRndm
+                        cmd =
+                            Random.generate 
+                                (GeneratedObjectIds model.activeRoom [(Map.Object.newWall worldStartPt worldEndPt |> Entity.EObject)]) 
+                                (Random.list 1 Uuid.uuidGenerator)
                     in
                     { model 
                     | mouseState = SelectionTool emptySelection 
-                    , rooms = Maybe.map (finchStar Dict.update model.rooms (Maybe.andThen (kestrel mbRoom))) model.activeRoom |> Maybe.withDefault model.rooms
                     }
-                        |> cardinal Tuple.pair (Maybe.withDefault Cmd.none mbCmd)
+                    |> cardinal Tuple.pair cmd
 
                 CreationTool (Wall Nothing) ->
                     let
@@ -747,17 +754,24 @@ selectionEmptyか : Model -> Bool
 selectionEmptyか model =
     case model.mouseState of
         SelectionTool selection ->
-            Room.occupants selection |> (==) 0
+            List.length selection |> (==) 0
         MoveTool selection _ ->
-            Room.occupants selection |> (==) 0
+            List.length selection |> (==) 0
         _ ->
             True
 
 
 view : Model -> Html Msg
 view model =
+    (Maybe.map2 (roomEditorDialog model.activeRoom) 
+        (Dict.get model.activeRoom model.roomNames)
+        (Dict.get model.activeRoom model.rooms)
+    |> Maybe.map List.singleton
+    |> Maybe.withDefault [])
+    ++
     [ viewWorkSpace model
     , viewToolBox model
+    , levelEditorDialog model
     ]
 --    [ Html.canvas [ Hats.width (model.canvasWidth |> Pixels.toFloat |> floor), Hats.height (model.canvasHeight |> Pixels.toFloat |> floor) ] [] ]
     |> Html.main_ []
@@ -774,7 +788,7 @@ viewWorkSpace model =
     let
         mbRoom =
             model.activeRoom
-            |> Maybe.andThen (cardinal Dict.get model.rooms)
+            |> cardinal Dict.get model.rooms
 
         canvasClickEvents =
             case model.mouseState of
@@ -810,7 +824,7 @@ viewWorkSpace model =
                             [ onDown ApplyTool ] ++ cursor.move
 
                         Just _ ->
-                            if Room.occupants selection > 0 then
+                            if List.length selection > 0 then
                                 [ onUp ApplyTool, onMove TrackTool ] ++ cursor.move
                             else
                                 [ onUp ApplyTool, onMove TrackTool ] ++ cursor.move
@@ -829,8 +843,7 @@ viewWorkSpace model =
         canvasAttributes =
             canvasClickEvents ++ [ Gats.id "canvas", viewBox ]
     in
-    (duple >> Tuple.mapSecond getSelection >> uncurry (viewRoom True))
-    :: (Maybe.map (cardinal (viewRoom False)) mbRoom
+    (Maybe.map (cardinal (viewRoom False)) mbRoom
             |> Maybe.map List.singleton
             |> Maybe.withDefault [])
     ++ (Maybe.map viewCanvas mbRoom
@@ -841,12 +854,15 @@ viewWorkSpace model =
 
 viewCanvas : Room -> Model -> List (Svg Msg)
 viewCanvas room model =
-    Geometry.Svg.polygon2d 
+    Room.boundingBox room 
+    |> Rectangle2d.fromBoundingBox 
+    |> Rectangle2d.toPolygon 
+    |> worldPolyToScreenPoly model
+    |> Geometry.Svg.polygon2d 
         [ Gats.id "room"
         , Gats.fill (if Room.lights room |> Dict.size |> (/=) 0 then "white" else "black")
         ] 
-        (Room.boundingBox room 
-            |> Rectangle2d.fromBoundingBox |> Rectangle2d.toPolygon |> worldPolyToScreenPoly model) |> List.singleton
+    |> List.singleton
 
 {-
 toolSelectedAttrs : String -> Model -> List (Svg.Attribute Msg)
@@ -872,23 +888,14 @@ toolSelectedAttrs key model =
 
 viewRoom : Bool -> Model -> Room -> List (Svg Msg)
 viewRoom isSelected model room =
-    if (Room.occupants room) + (Room.pendingOccupants room) == 0 then
+    if Room.occupants room == 0 then
         []
     else
-        let
-            (canvas, tool) =
-                if isSelected then 
-                    duple (\_ _ _ -> [])
-                else
-                    ((\_ _ _ -> []), (\_ -> viewTool))
-             
-        in
-        [ tool
+        [ \_ -> viewTool
         , viewRaysLayer
         , viewObjectLayer
         , viewLightsLayer
         , viewShadowsLayer
-        , canvas
         ]
         |> List.foldr ((\f -> robinStar f model isSelected room) >> (++)) []
             --|> List.foldl ((|>) model >> (++)) []
@@ -1101,14 +1108,66 @@ getSelection { mouseState } =
             emptySelection
 
 
+isValid : Model -> Bool
+isValid model =
+    Dict.get model.entryRoom model.rooms
+        |> Maybe.andThen Room.entry
+        |> Maybe.map (kestrel True)
+        |> Maybe.withDefault False
+        |> (&&) (model.name /= "")
+
+roomEditorDialog : String -> String -> Room -> (Html Msg)
+roomEditorDialog roomKey roomName room = 
+    let bbox = Room.boundingBox room
+        (w, h) = BoundingBox2d.dimensions bbox |> mapTuple Length.inCentimeters
+    in
+    [ Html.div []
+        [ Html.label [ Hats.for "name-input" ] [ Html.text "Room name" ]
+        , Html.input [ Hats.type_ "text", Hats.value roomName, Emits.onInput (RenameRoom roomKey), Hats.id "name-input" ] []
+        ]
+    , Html.div []
+        [ Html.label [ Hats.for "room-width" ] [ Html.text "Entry room" ]
+        , Html.input [ Hats.id "room-width", Hats.value (String.fromFloat w), Emits.onInput (String.toFloat >> Maybe.withDefault w >> cardinal (ResizeRoom roomKey) h), Hats.type_ "number"] [ ]
+        ]
+    , Html.div []
+        [ Html.label [ Hats.for "room-height" ] [ Html.text "Entry room" ]
+        , Html.input [ Hats.id "room-height", Hats.value (String.fromFloat h), Emits.onInput (String.toFloat >> Maybe.withDefault h >> ResizeRoom roomKey w), Hats.type_ "number"] [ ]
+        ]
+    , Html.button [ onDown (kestrel TriggerMetadataDialog) ] [ Html.text "Close" ]
+    ]
+    |> Html.node "dialog" [ Hats.id "room-editor" ]
+
+levelEditorDialog : Model -> (Html Msg)
+levelEditorDialog model =
+    [ Html.div []
+        [ Html.label [ Hats.for "name-input" ] [ Html.text "Level name" ]
+        , Html.input [ Hats.type_ "text", Hats.value model.name, Emits.onInput SetLevelName, Hats.id "name-input" ] []
+        ]
+    , Html.div []
+        [ Html.label [ Hats.for "entry-room-selector" ] [ Html.text "Entry room" ]
+        , Html.select [ Hats.id "entry-room-selector", Emits.onInput SetLevelEntry ]
+            ( Dict.foldl (\k v a -> 
+                Html.option 
+                    [ Hats.value k, Hats.selected (model.entryRoom == k), Hats.classList [("active-room-in-selector", model.activeRoom == k)]]
+                    [ Html.text v ]
+                :: a
+                ) [] model.roomNames
+            )
+        ]
+    , Html.button [ onDown (kestrel TriggerMetadataDialog) ] [ Html.text "Close" ]
+    ]
+    |> Html.node "dialog" [ Hats.id "level-metadata" ]
+
 viewToolBox : Model -> Html Msg
 viewToolBox model =
     let
+        selection = getSelection model
+        shadowsSelected = Dict.get model.activeRoom model.rooms |> Maybe.map (Room.shadows >> Dict.toList) |> Maybe.withDefault []
         creationTools =
             [ { label = "Create Wall", msg = SelectTool (CreationTool (Wall Nothing)), isSelected = baseToolEquivalence model.mouseState (CreationTool (Wall Nothing)) }
             , { label = "Create Light", msg = SelectTool (CreationTool (Light Nothing)), isSelected = baseToolEquivalence model.mouseState (CreationTool (Light Nothing)) }
             , { label = "Create Shadow", msg = SelectTool (CreationTool (Shadow [] Nothing)), isSelected = baseToolEquivalence model.mouseState (CreationTool (Light Nothing)) }
-
+            , { label = "Set as Entry", msg = SetRoomEntry (List.head shadowsSelected |> Maybe.map Tuple.first), isSelected = List.length shadowsSelected == 0 }
             ]
                 |> toolSet
 
@@ -1119,8 +1178,7 @@ viewToolBox model =
 
         transformationTools =
             let
-                selection = getSelection model
-                whichMove = if Room.occupants selection > 0 then MoveTool selection Nothing else MoveCanvasTool Nothing
+                whichMove = if selectionEmptyか model then MoveCanvasTool Nothing else MoveTool selection Nothing
             in
             [ { label = "Move", msg = SelectTool whichMove, isSelected = baseToolEquivalence model.mouseState (MoveTool emptySelection Nothing) }
             ]
@@ -1142,8 +1200,9 @@ viewToolBox model =
                 |> List.singleton
 
         exportTools = 
-            [ { label = "Import", msg = TriggerFialog, isSelected = False }
-            , { label = "Export", msg = ExportData, isSelected = False }
+            [ { label = "Metadata", msg = TriggerMetadataDialog, isSelected = False }
+            , { label = "Import", msg = TriggerFialog, isSelected = False }
+            , { label = "Export", msg = ExportData, isSelected = not <| isValid model }
             ]
             |> toolSet
 
@@ -1165,9 +1224,13 @@ viewToolBox model =
         roomTools =
             Dict.foldl 
                 (\k _ acc -> 
-                    Html.button [ onDown (kestrel (SelectRoom k)) ] 
-                        [ Html.text (Dict.get k model.roomNames |> Maybe.withDefault k) ]
-                        :: acc
+                    Html.div []
+                        [ Html.button [ onDown (kestrel (SelectRoom k)) ] 
+                            [ Html.text (Dict.get k model.roomNames |> Maybe.withDefault k) ]
+                        , Html.button [ onDown (kestrel (EditRoom k)) ]
+                            [ Html.text "?" ]
+                        ]
+                    :: acc
                 )
                 [] model.rooms
             ++ [ Html.button [ onDown (kestrel CreateRoom) ] [ Html.text "New"] ]
@@ -1194,6 +1257,7 @@ viewToolBox model =
         , roomTools
         ]
         |> List.concatMap (uncurry (::))
+        |> (::) (Html.text model.name)
         |> Html.div [ Hats.id "toolbox" ]
 
 
@@ -1243,13 +1307,15 @@ viewRoomOccupants dataSelector viewFn room model =
         |> Dict.foldr (\_ v a -> ([], v) :: a) [] 
         |> List.concatMap (uncurry (viewFn model))
 
+            {-
 viewRays : Room -> Model -> List (Svg Msg)
 viewRays room model =
-    room
-    |> Room.rays
+    model
+    |> .rays
     |> Dict.values
     |> List.concatMap identity
     |> List.concatMap (viewRay model)
+            -}
 
 viewRay : Model -> World.Line -> List (Svg Msg)
 viewRay model line =
@@ -1262,9 +1328,14 @@ normalAttributes room model =
     case model.mouseState of
         SelectionTool selection ->
             if selectionEmptyか model then
-                (\k -> [ onDown (Room.copyToNewRoom [k] room |> ApplyToolTo) ])
+                (\k -> [ onDown (ApplyToolTo [k] ) ])
             else
-                kestrel []
+                \k -> 
+                    if getSelection model |> List.member k then
+                        [ Gats.class "selected" ]
+                    else 
+                        []
+                
         _ -> kestrel []
 
 
@@ -1342,7 +1413,7 @@ selectedTransformations vecTranslator room model value =
 viewRoomRays : Bool -> Room -> Model -> List (Svg Msg)
 viewRoomRays isSelected room model =
     viewRoomOccs
-        { roomMapper = Room.rays
+        { roomMapper = (\_ -> model.debugGfx.rays)
         , dynamicAttributes = if isSelected then selectedAttributes room model else normalAttributes room model
         , staticAttributes = rayStyles
         , objectMapper = List.map (worldLineToScreenLine model >> (if isSelected then selectedRayTransformations room model else identity))
@@ -1447,12 +1518,15 @@ wallStyles : List (Svg.Attribute Msg)
 wallStyles =
     [ Gats.class "wall" ]
 
-screenPixelsToWorldMeters : (C.Frame -> c1 -> c2) -> (Quantity.Quantity Float (Quantity.Rate Length.Meters Pixels.Pixels) -> c2 -> c3) -> Model -> c1 -> c3
+screenPixelsToWorldMeters : (C.Frame -> c1 -> c2) -> (Quantity.Quantity Float (Quantity.Rate Length.Meters Pixels.Pixels) -> c2 -> c3) -> {a | frame : C.Frame, scale : Float } -> c1 -> c3
 screenPixelsToWorldMeters placement conversion model =
     placement model.frame
     >> conversion (Quantity.rate (Quantity.divideBy model.scale Length.centimeter) Pixels.pixel)
     
-worldMetersToScreenPixels : (C.Frame -> c2 -> c1) -> (Quantity.Quantity Float (Quantity.Rate Length.Meters Pixels.Pixels) -> c3 -> c2) -> Model -> c3 -> c1
+worldMetersToScreenPixels : (C.Frame -> c2 -> c1) 
+    -> (Quantity.Quantity Float 
+        (Quantity.Rate Length.Meters Pixels.Pixels) -> c3 -> c2) 
+    -> { a | frame : C.Frame, scale : Float } -> c3 -> c1
 worldMetersToScreenPixels placement conversion model =
     conversion (Quantity.rate (Quantity.divideBy model.scale Length.centimeter) Pixels.pixel)
     >> placement model.frame

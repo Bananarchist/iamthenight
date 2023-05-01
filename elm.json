@@ -15,6 +15,7 @@
             "elm/random": "1.0.0",
             "elm/svg": "1.0.1",
             "elm/time": "1.0.0",
+            "elm-community/dict-extra": "2.4.0",
             "elm-community/list-extra": "8.7.0",
             "elm-community/result-extra": "2.4.0",
             "elm-explorations/test": "2.0.1",

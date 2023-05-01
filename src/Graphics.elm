@@ -34,6 +34,7 @@ import Helpers exposing (greater)
 import Helpers exposing (isCardinalか)
 import Parameter1d
 import Helpers exposing (maybeTuple)
+import Map.World as World
 import Vector2d
 import Angle
 import Duration exposing (Duration)
@@ -70,14 +71,17 @@ init w h logic =
             Frame2d.atPoint Point2d.origin --(Point2d.pixels (w // 2 |> toFloat |> (*) scale |> negate) (h // 2 |> toFloat |> (*) scale |> negate)) --|> Frame2d.reverseY
         subModel = { scale = scale, frame = frame }
         shadows = 
-            logic.shadows |> Dict.map (\_ -> Map.Shadow.polygon |> polygonInFrame subModel)
+            logic
+            |> Logic.shadows 
+            |> List.map (Map.Shadow.polygon >> polygonInFrame subModel)
+            |> Array.fromList
     in
     { frame = frame
     , player = 
         { direction = Keyboard.Arrows.NoDirection
         , position = 
-            Logic.playerShadowIndex logic
-            |> Maybe.andThen (cardinal Array.get shadows)
+            Logic.playerShadow logic
+            |> Maybe.map (Map.Shadow.polygon >> polygonInFrame subModel)
             |> Maybe.andThen (cardinal pointAtEdgeOfPolygon Keyboard.Arrows.NoDirection)
             |> Maybe.withDefault (Logic.playerWorldPoint logic |> pointInFrame subModel)
         }
@@ -105,10 +109,10 @@ update msg logic keys og =
             | player =
                 { p 
                 | position =
-                    Logic.playerShadowIndex logic
-                    |> Maybe.andThen (cardinal Array.get og.shadows)
-                    |> Maybe.andThen (cardinal pointAtEdgeOfPolygon direction)
-                    |> Maybe.withDefault p.position
+                    Logic.playerShadow logic
+                    |> Maybe.map (Map.Shadow.polygon >> polygonInFrame og)
+                    |> Maybe.andThen (cardinal pointAtEdgeOfPolygon Keyboard.Arrows.NoDirection)
+                    |> Maybe.withDefault (Logic.playerWorldPoint logic |> pointInFrame og)
                 }
                 |> (cardinal (Animator.go Animator.slowly) og.player)
             }
@@ -154,10 +158,10 @@ view model =
     |> dove Html.main_ [] List.singleton
 
 
-polygonInFrame : { a | frame : C.Frame, scale : Float } -> C.Polygon -> C.ScreenPolygon
+polygonInFrame : { a | frame : C.Frame, scale : Float } -> World.Polygon -> C.ScreenPolygon
 polygonInFrame {scale, frame} = Polygon2d.at (C.meterToPixelConversion scale) >> Polygon2d.relativeTo frame
 
-pointInFrame : { a | frame : C.Frame, scale : Float } -> C.Point -> C.ScreenPoint
+pointInFrame : { a | frame : C.Frame, scale : Float } -> World.Point -> C.ScreenPoint
 pointInFrame {scale, frame} = Point2d.at (C.meterToPixelConversion scale) >> Point2d.relativeTo frame
 
 {-

@@ -22,6 +22,7 @@ done
 # create output directories
 mkdir -p $output_dir
 mkdir -p $output_dir/assets
+mkdir -p $output_dir/levels
 
 js_out="$output_dir/main.js"
 entry="$entry_dir/Main.elm"
@@ -38,6 +39,7 @@ fi
 cp $entry_dir/index.html $output_dir
 cp $entry_dir/index.css $output_dir
 cp assets/*.svg dist
+cp assets/levels/*.json dist/levels
 
 if $dist; then
 	echo "Compressing client for distribution"
