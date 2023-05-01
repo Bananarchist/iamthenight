@@ -1,4 +1,5 @@
 module Graphics exposing (..)
+import Angle
 import BoundingBox2d
 import Length
 import Polygon2d
@@ -41,6 +42,7 @@ import Duration exposing (Duration)
 import Time
 import Dict
 import Map.Shadow
+import Angle exposing (Angle)
 
 type Msg
     = Resize Int Int
@@ -68,7 +70,7 @@ init w h logic =
     let
         scale = 1 --min ((toFloat w) / 6000)  ((toFloat h) / 4000)
         frame =
-            Frame2d.atPoint Point2d.origin --(Point2d.pixels (w // 2 |> toFloat |> (*) scale |> negate) (h // 2 |> toFloat |> (*) scale |> negate)) --|> Frame2d.reverseY
+            Frame2d.atPoint Point2d.origin |> Frame2d.reverseY --(Point2d.pixels (w // 2 |> toFloat |> (*) scale |> negate) (h // 2 |> toFloat |> (*) scale |> negate)) --|> Frame2d.reverseY
         subModel = { scale = scale, frame = frame }
         shadows = 
             logic
@@ -110,9 +112,10 @@ update msg logic keys og =
                 { p 
                 | position =
                     Logic.playerShadow logic
-                    |> Maybe.map (Map.Shadow.polygon >> polygonInFrame og)
-                    |> Maybe.andThen (cardinal pointAtEdgeOfPolygon Keyboard.Arrows.NoDirection)
+                    |> Maybe.map (Map.Shadow.polygon >> polygonInFrame og >> Debug.log "shadow ply")
+                    |> Maybe.andThen (cardinal pointAtEdgeOfPolygon direction)
                     |> Maybe.withDefault (Logic.playerWorldPoint logic |> pointInFrame og)
+                , direction = direction
                 }
                 |> (cardinal (Animator.go Animator.slowly) og.player)
             }
@@ -229,9 +232,66 @@ newestmostpointAtEdgeOfPolygon polygon direction =
     ) mbBB
 
 
-
 pointAtEdgeOfPolygon : C.ScreenPolygon -> C.ScreenDirection -> Maybe C.ScreenPoint
 pointAtEdgeOfPolygon polygon direction =
+    let
+        mbBB = Polygon2d.boundingBox polygon
+        mbCenter =  mbBB |> Maybe.map BoundingBox2d.centerPoint
+    in
+    if direction == NoDirection then
+        mbCenter
+    else
+        let
+            angle = 
+                case direction of
+                    North -> Angle.degrees -90
+                    South -> Angle.degrees 90
+                    East -> Angle.degrees 0
+                    West -> Angle.degrees 180
+                    NorthEast -> Angle.degrees -45
+                    NorthWest -> Angle.degrees -135
+                    SouthEast -> Angle.degrees 45
+                    SouthWest -> Angle.degrees 135
+                    NoDirection -> Angle.degrees 0
+            polyPerim = Polygon2d.perimeter polygon
+            polyLines = Polygon2d.edges polygon
+            polyLinesByPercentOfPerimeter = 
+                List.map 
+                    (duple >> Tuple.mapSecond (LineSegment2d.length >> cardinal Quantity.ratio polyPerim >> (*) 360 >> ceiling))
+                    polyLines
+            test_points = 
+                List.concatMap (\(l, pc) -> Parameter1d.leading pc (LineSegment2d.interpolate l)) polyLinesByPercentOfPerimeter
+
+            testTo : C.ScreenPoint -> Maybe (Angle, C.ScreenPoint) -> Maybe (Angle, C.ScreenPoint)
+            testTo checkIfBetter thanThis =
+                let
+                    mbAngle : Maybe Angle
+                    mbAngle = 
+                        Maybe.andThen (cardinal Direction2d.from checkIfBetter) mbCenter
+                        |> Maybe.map Direction2d.toAngle
+                in
+                case thanThis of
+                    Nothing -> 
+                        (mbAngle, Just checkIfBetter) |> maybeTuple
+                    Just (dir, p) -> 
+                        Maybe.andThen (\newDir ->
+                            if Quantity.lessThan 
+                                (Quantity.minus newDir angle |> Quantity.abs) 
+                                (Quantity.minus dir angle |> Quantity.abs)
+                            then
+                                thanThis
+                            else
+                                Just (newDir, checkIfBetter)
+
+                        ) mbAngle
+                        
+        in
+        List.foldl testTo Nothing test_points
+        |> Maybe.map Tuple.second
+    
+
+newishpointAtEdgeOfPolygon : C.ScreenPolygon -> C.ScreenDirection -> Maybe C.ScreenPoint
+newishpointAtEdgeOfPolygon polygon direction =
     let
         mbBB = Polygon2d.boundingBox polygon
         mbCenter =  mbBB |> Maybe.map BoundingBox2d.centerPoint

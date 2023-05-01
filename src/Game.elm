@@ -109,7 +109,11 @@ update msg model =
                             in
                             Tuple.mapFirst (\l -> Game {data | logic = l, gfx = newGfx, controls = newKeys }) newLogic
                         _ ->
-                            Game { data | gfx = (Graphics.update (Graphics.Lean (Keyboard.Arrows.arrowsDirection newKeys)) logic newKeys gfx), controls = newKeys }
+                            Game 
+                                { data 
+                                | gfx = (Graphics.update (Graphics.Lean (Keyboard.Arrows.arrowsDirection newKeys)) logic newKeys gfx)
+                                , controls = newKeys 
+                                }
                             |> cardinal Tuple.pair Cmd.none
                 Msg.Frame newTime ->
                     Game { data | gfx = (Graphics.update (Graphics.Frame newTime) logic controls gfx) }
